@@ -1,4 +1,4 @@
-# Software that works with LLMs
+# Software that works with AI
 
 *A practical guide to modern AI integration*
 
