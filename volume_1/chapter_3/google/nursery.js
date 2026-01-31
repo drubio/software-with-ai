@@ -1,10 +1,11 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from '@google/genai';
 import "dotenv/config";
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const genAI = new GoogleGenAI(process.env.GOOGLE_API_KEY);
 
-const result = await model.generateContent("Twinkle, Twinkle, Little");
-const response = await result.response;
+const response = await genAI.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: "Twinkle, Twinkle, Little",
+});
 
-console.log(response.text());
+console.log(response.text);
