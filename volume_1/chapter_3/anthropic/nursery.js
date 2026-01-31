@@ -6,7 +6,7 @@ const anthropic = new Anthropic({
 });
 
 const response = await anthropic.messages.create({
-  model: "claude-3-5-sonnet-20241022",
+  model: "claude-sonnet-4-5",
   max_tokens: 100,
   messages: [{ role: "user", content: "Twinkle, Twinkle, Little" }],
 });

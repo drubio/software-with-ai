@@ -4,7 +4,7 @@
     "start": "node nursery.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.0",
+    "@anthropic-ai/sdk": "^0.72.1",
     "dotenv": "^16.0.0"
   }
 }
