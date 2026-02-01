@@ -111,7 +111,6 @@ node llamaindex/llm_gateway.js web
 | Method | Path         | Description                      |
 | ------ | ------------ | -------------------------------- |
 | GET    | `/`          | Service status and init messages |
-| GET    | `/health`    | Health check                     |
 | GET    | `/providers` | List initialized providers       |
 | POST   | `/query`     | Query a single provider          |
 | POST   | `/query-all` | Query all available providers    |

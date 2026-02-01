@@ -20,22 +20,22 @@ config({ path: join(__dirname, '.env') });
 export const PROVIDERS = {
     anthropic: {
         apiKeyEnv: 'ANTHROPIC_API_KEY',
-        defaultModel: 'claude-3-5-sonnet-20241022',
+        defaultModel: 'claude-sonnet-4-5',
         displayName: 'Anthropic Claude'
     },
     openai: {
         apiKeyEnv: 'OPENAI_API_KEY',
-        defaultModel: 'gpt-4o',
+        defaultModel: 'gpt-5.2',
         displayName: 'OpenAI GPT'
     },
     google: {
         apiKeyEnv: 'GOOGLE_API_KEY',
-        defaultModel: 'gemini-2.0-flash',
+        defaultModel: 'gemini-3-flash-preview',
         displayName: 'Google Gemini'
     },
     xai: {
         apiKeyEnv: 'XAI_API_KEY',
-        defaultModel: 'grok-3',
+        defaultModel: 'grok-4',
         displayName: 'xAI Grok'
     }
 };

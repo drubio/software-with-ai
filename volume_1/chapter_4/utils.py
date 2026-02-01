@@ -15,22 +15,22 @@ load_dotenv()
 PROVIDERS = {
     "anthropic": {
         "api_key_env": "ANTHROPIC_API_KEY",
-        "default_model": "claude-3-5-sonnet-20241022",
+        "default_model": "claude-sonnet-4-5",
         "display_name": "Anthropic Claude"
     },
     "openai": {
         "api_key_env": "OPENAI_API_KEY",
-        "default_model": "gpt-4o",
+        "default_model": "gpt-5.2",
         "display_name": "OpenAI GPT"
     },
     "google": {
         "api_key_env": "GOOGLE_API_KEY",
-        "default_model": "gemini-2.0-flash",
+        "default_model": "gemini-3-flash-preview",
         "display_name": "Google Gemini"
     },
     "xai": {
         "api_key_env": "XAI_API_KEY",
-        "default_model": "grok-beta",
+        "default_model": "grok-4",
         "display_name": "xAI Grok"
     }
 }
