@@ -9,7 +9,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from typing import Dict
 from llama_index.llms.anthropic import Anthropic
 from llama_index.llms.openai import OpenAI
-from llama_index.llms.gemini import Gemini
+from llama_index.llms.google_genai import GoogleGenAI
+from llama_index.llms.openai_like import OpenAILike
 from llama_index.core.llms import ChatMessage
 
 from utils import get_api_key, get_default_model, BaseLLMManager, interactive_cli
@@ -44,18 +45,20 @@ class LlamaIndexLLMManager(BaseLLMManager):
             )
         
         elif provider == "google":
-            return Gemini(
+            return GoogleGenAI(
                 api_key=get_api_key(provider),
                 model=get_default_model(provider),
                 temperature=temperature,
-                max_output_tokens=max_tokens  # Gemini's parameter name
+                max_tokens=max_tokens
             )
         
         elif provider == "xai":
-            return OpenAI(
+            return OpenAILike(
                 api_key=get_api_key(provider),
                 api_base="https://api.x.ai/v1",
                 model=get_default_model(provider),
+                is_chat_model=True,
+                is_function_calling_model=False,                
                 temperature=temperature,
                 max_tokens=max_tokens
             )

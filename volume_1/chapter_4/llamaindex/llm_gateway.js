@@ -1,14 +1,11 @@
 /**
  * LLM Tester - LlamaIndex JavaScript Framework Implementation
- * ONLY LlamaIndex-specific logic, inherits all generic functionality
+ * Aligned with the Python LlamaIndex implementation.
  */
 
-import { 
-    Anthropic, 
-    OpenAI, 
-    Gemini,
-    ChatMessage 
-} from 'llamaindex';
+import { Anthropic } from '@llamaindex/anthropic';
+import { OpenAI } from '@llamaindex/openai';
+import { Gemini } from '@llamaindex/google';
 
 import { 
     getApiKey, 
@@ -19,7 +16,7 @@ import {
 
 class LlamaIndexLLMManager extends BaseLLMManager {
     constructor() {
-        super('LlamaIndex');
+        super('LlamaIndex JS');
     }
 
     async _testProvider(provider) {
@@ -28,12 +25,13 @@ class LlamaIndexLLMManager extends BaseLLMManager {
     }
 
     _createClient(provider, temperature, maxTokens) {
-        // Create LlamaIndex client - the only LlamaIndex-specific logic
-        
+        const apiKey = getApiKey(provider);
+        const model = getDefaultModel(provider);
+
         if (provider === 'anthropic') {
             return new Anthropic({
-                apiKey: getApiKey(provider),
-                model: getDefaultModel(provider),
+                apiKey: apiKey,
+                model: model,
                 temperature: temperature,
                 maxTokens: maxTokens
             });
@@ -41,99 +39,77 @@ class LlamaIndexLLMManager extends BaseLLMManager {
         
         else if (provider === 'openai') {
             return new OpenAI({
-                apiKey: getApiKey(provider),
-                model: getDefaultModel(provider),
+                apiKey: apiKey,
+                model: model,
                 temperature: temperature,
-                maxTokens: maxTokens
+                maxCompletionTokens: maxTokens
+            });
+        }
+
+        else if (provider === 'xai') {
+            // Equivalent to OpenAILike in Python LlamaIndex
+            return new OpenAI({
+                apiKey: apiKey,
+                model: model,
+                temperature: temperature,
+                maxTokens: maxTokens,
+                // Override base URL for xAI Grok
+                baseURL: "https://api.x.ai/v1"
             });
         }
         
         else if (provider === 'google') {
             return new Gemini({
-                apiKey: getApiKey(provider),
-                model: getDefaultModel(provider),
-                temperature: temperature,
-                maxOutputTokens: maxTokens  // Gemini's parameter name
-            });
-        }
-        
-        else if (provider === 'xai') {
-            return new OpenAI({
-                apiKey: getApiKey(provider),
-                apiBase: 'https://api.x.ai/v1',
-                model: getDefaultModel(provider),
+                apiKey: apiKey,
+                model: model,
                 temperature: temperature,
                 maxTokens: maxTokens
             });
         }
         
-        else {
-            throw new Error(`Unsupported provider: ${provider}`);
-        }
+        throw new Error(`Provider ${provider} not supported`);
     }
 
     async askQuestion(topic, provider = null, template = '{topic}', maxTokens = 1000, temperature = 0.7) {
-        // LlamaIndex-specific question asking
-        
-        const prompt = template.replace('{topic}', topic);
-        
-        // Use first available provider if none specified
-        const availableProviders = this.getAvailableProviders();
-        if (!provider || !availableProviders.includes(provider)) {
-            if (availableProviders.length === 0) {
-                return {
-                    success: false,
-                    error: 'No providers available',
-                    provider: 'none',
-                    model: 'none',
-                    prompt: prompt,
-                    response: null
-                };
-            }
-            provider = availableProviders[0];
-        }
+        const available = this.getAvailableProviders();
+        if (!provider && available.length > 0) provider = available[0];
+        if (!provider) return { success: false, error: 'No provider' };
 
+        const client = this._createClient(provider, temperature, maxTokens);
+        const prompt = template.replace('{topic}', topic);
         const model = getDefaultModel(provider);
 
         try {
-            // Check if we're in web mode to avoid print statements
-            const webMode = typeof process.stdout.write !== 'function' || process.stdout.isTTY === false;
-            
-            if (!webMode) {
-                console.log(`Creating LlamaIndex client for ${provider} (temp=${temperature}, max_tokens=${maxTokens})`);
-            }
-            
-            // LlamaIndex-specific: Create client
-            const client = this._createClient(provider, temperature, maxTokens);
-            
-            if (!webMode) {
-                console.log(`Making LlamaIndex call to ${provider}...`);
-            }
-            
-            // LlamaIndex-specific: Make the call
-            // LlamaIndex supports both complete() and chat() methods
-            // Use chat() for better conversation handling
-            let result;
-            if (typeof client.chat === 'function') {
-                const messages = [new ChatMessage({ role: 'user', content: prompt })];
-                const response = await client.chat({ messages });
-                result = response.message.content;
-            } else {
-                // Fallback to complete() for models that don't support chat
-                const response = await client.complete(prompt);
-                result = String(response);
-            }
-            
-            if (!webMode) {
-                console.log(`LlamaIndex call completed for ${provider}`);
-            }
-            
+            // LlamaIndex chat logic: matches Python's client.chat([ChatMessage(...)])
+            const response = await client.chat({
+                messages: [
+                    { role: 'user', content: prompt }
+                ]
+            });
+
+	    // Robust extraction logic
+	    let resultText = "";
+	    const content = response.message.content;
+
+	    if (typeof content === 'string') {
+		resultText = content;
+	    } else if (Array.isArray(content)) {
+		// Join all text parts if there are multiple, or just take the first
+		resultText = content
+		    .filter(block => block.type === 'text')
+		    .map(block => block.text)
+		    .join('\n');
+	    } else {
+		// Fallback for unexpected shapes
+		resultText = content.toString();
+	    }
+
             return {
                 success: true,
                 provider: provider,
                 model: model,
                 prompt: prompt,
-                response: result,
+                response: resultText,
                 temperature: temperature,
                 maxTokens: maxTokens
             };
@@ -158,25 +134,21 @@ async function main() {
     
     if (args.length > 0 && args[0] === 'web') {
         try {
-            const { runWebServer } = await import('../web.js');
+            const { runWebServer } = await import('./web.js');
             await runWebServer(LlamaIndexLLMManager);
         } catch (error) {
             console.error('Error: web.js not found or Express not installed.');
-            console.error('Install Express: npm install express cors');
             process.exit(1);
         }
     } else {
-        // CLI mode - all generic logic is in utils.interactiveCli()
         const manager = new LlamaIndexLLMManager();
-        await manager._checkProviders(); // Wait for provider initialization
+        await manager._checkProviders();
         await interactiveCli(manager);
     }
 }
 
-// Export for web.js
 export { LlamaIndexLLMManager };
 
-// Run if this is the main module
 if (import.meta.url === `file://${process.argv[1]}`) {
     main().catch(console.error);
 }

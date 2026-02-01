@@ -25,7 +25,7 @@ class LangChainLLMManager(BaseLLMManager):
         
         if provider == "anthropic":
             return ChatAnthropic(
-                anthropic_api_key=get_api_key(provider),
+                api_key=get_api_key(provider),
                 model=get_default_model(provider),
                 temperature=temperature,
                 max_tokens=max_tokens
@@ -33,7 +33,7 @@ class LangChainLLMManager(BaseLLMManager):
         
         elif provider == "openai":
             return ChatOpenAI(
-                openai_api_key=get_api_key(provider),
+                api_key=get_api_key(provider),
                 model=get_default_model(provider),
                 temperature=temperature,
                 max_tokens=max_tokens
@@ -41,16 +41,16 @@ class LangChainLLMManager(BaseLLMManager):
         
         elif provider == "google":
             return ChatGoogleGenerativeAI(
-                google_api_key=get_api_key(provider),
+                api_key=get_api_key(provider),
                 model=get_default_model(provider),
                 temperature=temperature,
-                max_output_tokens=max_tokens  # Google's parameter name
+                max_tokens=max_tokens
             )
         
         elif provider == "xai":
             return ChatOpenAI(
-                openai_api_key=get_api_key(provider),
-                openai_api_base="https://api.x.ai/v1",
+                api_key=get_api_key(provider),
+                base_url="https://api.x.ai/v1",
                 model=get_default_model(provider),
                 temperature=temperature,
                 max_tokens=max_tokens
@@ -111,7 +111,8 @@ class LangChainLLMManager(BaseLLMManager):
                 "provider": provider,
                 "model": model,
                 "prompt": prompt,
-                "response": str(result.content),
+                # Google Gemini 3 series models now always return a list of content blocks to capture thought signatures. Use the .text property to recover string content.
+                "response": str(result.content) if provider != 'google' else str(result.text),
                 "temperature": temperature,
                 "max_tokens": max_tokens
             }

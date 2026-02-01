@@ -30,7 +30,7 @@ class LangChainLLMManager extends BaseLLMManager {
         
         if (provider === 'anthropic') {
             return new ChatAnthropic({
-                anthropicApiKey: getApiKey(provider),
+                apiKey: getApiKey(provider),
                 model: getDefaultModel(provider),
                 temperature: temperature,
                 maxTokens: maxTokens
@@ -39,7 +39,7 @@ class LangChainLLMManager extends BaseLLMManager {
         
         else if (provider === 'openai') {
             return new ChatOpenAI({
-                openAIApiKey: getApiKey(provider),
+                apiKey: getApiKey(provider),
                 model: getDefaultModel(provider),
                 temperature: temperature,
                 maxTokens: maxTokens
@@ -51,15 +51,15 @@ class LangChainLLMManager extends BaseLLMManager {
                 apiKey: getApiKey(provider),
                 model: getDefaultModel(provider),
                 temperature: temperature,
-                maxOutputTokens: maxTokens  // Google's parameter name
+                maxTokens: maxTokens
             });
         }
         
         else if (provider === 'xai') {
             return new ChatOpenAI({
-                openAIApiKey: getApiKey(provider),
+                apiKey: getApiKey(provider),
                 configuration: {
-                    baseURL: 'https://api.x.ai/v1'
+                    baseURL: 'https://api.x.ai/v1',
                 },
                 model: getDefaultModel(provider),
                 temperature: temperature,
