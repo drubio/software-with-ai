@@ -10,7 +10,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="grok-3",
+    model="grok-4",
     max_completion_tokens=100,
     messages=[{"role": "user", "content": "Twinkle, Twinkle, Little"}]
 )
