@@ -47,7 +47,6 @@ class LlamaIndexLLMManager extends BaseLLMManager {
         }
 
         else if (provider === 'xai') {
-            // Equivalent to OpenAILike in Python LlamaIndex
             return new OpenAI({
                 apiKey: apiKey,
                 model: model,
@@ -80,7 +79,7 @@ class LlamaIndexLLMManager extends BaseLLMManager {
         const model = getDefaultModel(provider);
 
         try {
-            // LlamaIndex chat logic: matches Python's client.chat([ChatMessage(...)])
+            // LlamaIndex chat logic
             const response = await client.chat({
                 messages: [
                     { role: 'user', content: prompt }
