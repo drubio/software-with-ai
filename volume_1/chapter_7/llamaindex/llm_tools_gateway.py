@@ -1,4 +1,4 @@
-"""LLM Tools Gateway - LangChain (Chapter 7).
+"""LLM Tools Gateway - LlamaIndex (Chapter 7).
 
 Builds on Chapter 6 manager hierarchy:
 Chapter 4 (base providers) -> Chapter 5 (memory/persistence) ->
@@ -13,15 +13,17 @@ import re
 import sys
 from typing import Dict, Optional
 
+from llama_index.core.llms import ChatMessage
+
 CHAPTER_4_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "chapter_4"))
-CHAPTER_6_LANGCHAIN = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "chapter_6", "langchain"))
+CHAPTER_6_LLAMAINDEX = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "chapter_6", "llamaindex"))
 CHAPTER_7_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 sys.path.append(CHAPTER_4_ROOT)
-sys.path.append(CHAPTER_6_LANGCHAIN)
+sys.path.append(CHAPTER_6_LLAMAINDEX)
 sys.path.append(CHAPTER_7_ROOT)
 
-from llm_structured_gateway import LangChainLLMManager as Chapter6LangChainManager
+from llm_structured_gateway import LlamaIndexLLMManager as Chapter6LlamaIndexManager
 from tools import build_tools_prompt, run_tool
 from utils import get_default_model, interactive_cli
 
@@ -60,12 +62,12 @@ Return strict JSON:
 """.strip()
 
 
-class LangChainLLMManager(Chapter6LangChainManager):
-    """Chapter 7 LangChain manager with simple JSON-driven tool execution."""
+class LlamaIndexLLMManager(Chapter6LlamaIndexManager):
+    """Chapter 7 LlamaIndex manager with simple JSON-driven tool execution."""
 
     def __init__(self, memory_enabled: bool = True):
         super().__init__(memory_enabled=memory_enabled)
-        self.framework = "LangChain+Tools"
+        self.framework = "LlamaIndex+Tools"
 
     @staticmethod
     def _extract_json_object(raw: str) -> Dict:
@@ -88,8 +90,8 @@ class LangChainLLMManager(Chapter6LangChainManager):
 
     def _invoke_json_step(self, provider: str, prompt: str, temperature: float, max_tokens: int) -> Dict:
         client = self._create_client(provider, temperature=temperature, max_tokens=max_tokens)
-        result = client.invoke(self._build_messages(prompt))
-        text = self._extract_text(provider, result)
+        result = client.chat([ChatMessage(role="user", content=prompt)])
+        text = self._extract_text(result)
         return self._extract_json_object(text)
 
     def ask_question(
@@ -171,9 +173,9 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "web":
         from web import run_web_server
 
-        run_web_server(lambda: LangChainLLMManager(memory_enabled=True))
+        run_web_server(lambda: LlamaIndexLLMManager(memory_enabled=True))
     else:
-        interactive_cli(LangChainLLMManager(memory_enabled=True))
+        interactive_cli(LlamaIndexLLMManager(memory_enabled=True))
 
 
 if __name__ == "__main__":

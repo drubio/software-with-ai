@@ -1,41 +1,59 @@
-// tools.js
+/**
+ * Chapter 7 tool utilities (JavaScript).
+ *
+ * Mirrors tools.py so contracts are portable across Python/JS and frameworks.
+ */
 
 import { marked } from 'marked';
 
-/**
- * Convert Markdown to HTML
- * @param {string} text
- * @returns {string}
- */
+export const TOOL_DEFINITIONS = [
+    {
+        name: 'format_markdown_to_html',
+        description: 'Convert markdown text into HTML.',
+        parameters: { text: 'string - markdown content' },
+    },
+    {
+        name: 'get_datetime',
+        description: 'Get the current datetime in a timezone (e.g. UTC, Europe/Madrid).',
+        parameters: { timezone: 'string - IANA timezone' },
+    },
+];
+
 export function formatMarkdownToHTML(text) {
-    return marked(text || '');
+    return marked(String(text || ''));
 }
 
-/**
- * Get the current date and time in a specific timezone
- * @param {string} timezone
- * @returns {string}
- */
 export function getDatetime(timezone = 'UTC') {
     try {
-        return new Date().toLocaleString('en-US', { timeZone: timezone });
-    } catch (e) {
-        return `Error: ${e.message}`;
+        return new Date().toLocaleString('en-US', { timeZone: String(timezone || 'UTC') });
+    } catch (error) {
+        return `Error: ${error.message}`;
     }
 }
 
-/**
- * Dispatch to available tools
- * @param {string} action
- * @param {object} parameters
- * @returns {string}
- */
+const TOOL_HANDLERS = {
+    format_markdown_to_html: (parameters = {}) => formatMarkdownToHTML(parameters.text || ''),
+    get_datetime: (parameters = {}) => getDatetime(parameters.timezone || 'UTC'),
+};
+
+export function listTools() {
+    return TOOL_DEFINITIONS;
+}
+
 export function runTool(action, parameters = {}) {
-    if (action === 'format_markdown_to_html') {
-        return formatMarkdownToHTML(parameters.text || '');
-    } else if (action === 'get_datetime') {
-        return getDatetime(parameters.timezone || 'UTC');
-    } else {
+    const handler = TOOL_HANDLERS[action];
+    if (!handler) {
         return `Unknown action: ${action}`;
     }
+
+    return handler(parameters || {});
+}
+
+export function buildToolsPrompt() {
+    return TOOL_DEFINITIONS.map((tool) => {
+        const params = Object.entries(tool.parameters)
+            .map(([key, value]) => `${key} (${value})`)
+            .join(', ');
+        return `- ${tool.name}: ${tool.description} Params: ${params}`;
+    }).join('\n');
 }

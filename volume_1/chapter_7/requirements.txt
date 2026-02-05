@@ -1,2 +1,3 @@
-markdown
-pytz
+# Chapter 7 tool utility dependencies
+markdown>=3.6
+pytz>=2024.1
