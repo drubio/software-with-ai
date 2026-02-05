@@ -233,12 +233,12 @@ def interactive_cli(manager: BaseLLMManager):
     print(f"\nAvailable providers: {', '.join([get_display_name(p) for p in available_providers])}")
     query_all = input("Query ALL providers or select one? (all/one): ").strip().lower()
 
-    # Determine memory compatibility once
+    # Determine memory compatibility once (kept in sync with JS logic)
     memory_supported = (
-        hasattr(manager, "memory_enabled") and
-        getattr(manager, "memory_enabled") is True and
-        hasattr(manager, "ask_question") and
-        "session_id" in manager.ask_question.__code__.co_varnames
+        getattr(manager, "memory_enabled", False) is True
+        and hasattr(manager, "ask_question")
+        and hasattr(manager, "get_history")
+        and hasattr(manager, "reset_memory")
     )
 
     if query_all in ["all", "a", ""]:

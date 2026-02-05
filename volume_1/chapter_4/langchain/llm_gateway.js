@@ -1,6 +1,6 @@
 /**
  * LLM Tester - LangChain JavaScript Framework Implementation
- * ONLY LangChain-specific logic, inherits all generic functionality
+ * Reusable core manager for chapter extensions.
  */
 
 import { ChatAnthropic } from '@langchain/anthropic';
@@ -8,11 +8,11 @@ import { ChatOpenAI } from '@langchain/openai';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 
-import { 
-    getApiKey, 
-    getDefaultModel, 
-    BaseLLMManager, 
-    interactiveCli 
+import {
+    getApiKey,
+    getDefaultModel,
+    BaseLLMManager,
+    interactiveCli,
 } from '../utils.js';
 
 class LangChainLLMManager extends BaseLLMManager {
@@ -21,128 +21,107 @@ class LangChainLLMManager extends BaseLLMManager {
     }
 
     async _testProvider(provider) {
-        // Test LangChain provider initialization
         await this._createClient(provider, 0.7, 1000);
     }
 
     _createClient(provider, temperature, maxTokens) {
-        // Create LangChain client - the only LangChain-specific logic
-        
         if (provider === 'anthropic') {
             return new ChatAnthropic({
                 apiKey: getApiKey(provider),
                 model: getDefaultModel(provider),
-                temperature: temperature,
-                maxTokens: maxTokens
+                temperature,
+                maxTokens,
             });
         }
-        
-        else if (provider === 'openai') {
+        if (provider === 'openai') {
             return new ChatOpenAI({
                 apiKey: getApiKey(provider),
                 model: getDefaultModel(provider),
-                temperature: temperature,
-                maxTokens: maxTokens
+                temperature,
+                maxTokens,
             });
         }
-        
-        else if (provider === 'google') {
+        if (provider === 'google') {
             return new ChatGoogleGenerativeAI({
                 apiKey: getApiKey(provider),
                 model: getDefaultModel(provider),
-                temperature: temperature,
-                maxTokens: maxTokens
+                temperature,
+                maxTokens,
             });
         }
-        
-        else if (provider === 'xai') {
+        if (provider === 'xai') {
             return new ChatOpenAI({
                 apiKey: getApiKey(provider),
-                configuration: {
-                    baseURL: 'https://api.x.ai/v1',
-                },
+                configuration: { baseURL: 'https://api.x.ai/v1' },
                 model: getDefaultModel(provider),
-                temperature: temperature,
-                maxTokens: maxTokens
+                temperature,
+                maxTokens,
             });
         }
-        
-        else {
-            throw new Error(`Unsupported provider: ${provider}`);
+        throw new Error(`Unsupported provider: ${provider}`);
+    }
+
+    _resolveProvider(provider) {
+        const available = this.getAvailableProviders();
+        if (provider && available.includes(provider)) {
+            return provider;
         }
+        return available.length > 0 ? available[0] : null;
+    }
+
+    _buildMessages(prompt) {
+        return [
+            new SystemMessage('You are a helpful AI assistant.'),
+            new HumanMessage(prompt),
+        ];
+    }
+
+    _extractText(provider, result) {
+        if (provider === 'google' && typeof result?.text !== 'undefined') {
+            return String(result.text);
+        }
+        return String(result?.content ?? '');
     }
 
     async askQuestion(topic, provider = null, template = '{topic}', maxTokens = 1000, temperature = 0.7) {
-        // LangChain-specific question asking
-        
         const prompt = template.replace('{topic}', topic);
-        
-        // Use first available provider if none specified
-        const availableProviders = this.getAvailableProviders();
-        if (!provider || !availableProviders.includes(provider)) {
-            if (availableProviders.length === 0) {
-                return {
-                    success: false,
-                    error: 'No providers available',
-                    provider: 'none',
-                    model: 'none',
-                    prompt: prompt,
-                    response: null
-                };
-            }
-            provider = availableProviders[0];
+        const resolvedProvider = this._resolveProvider(provider);
+
+        if (!resolvedProvider) {
+            return {
+                success: false,
+                error: 'No providers available',
+                provider: 'none',
+                model: 'none',
+                prompt,
+                response: null,
+            };
         }
 
-        const model = getDefaultModel(provider);
+        const model = getDefaultModel(resolvedProvider);
 
         try {
-            // Check if we're in web mode to avoid print statements
-            const webMode = typeof process.stdout.write !== 'function' || process.stdout.isTTY === false;
-            
-            if (!webMode) {
-                console.log(`Creating LangChain client for ${provider} (temp=${temperature}, max_tokens=${maxTokens})`);
-            }
-            
-            // LangChain-specific: Create client
-            const client = this._createClient(provider, temperature, maxTokens);
-            
-            // LangChain-specific: Create messages
-            const messages = [
-                new SystemMessage('You are a helpful AI assistant.'),
-                new HumanMessage(prompt)
-            ];
-            
-            if (!webMode) {
-                console.log(`Making LangChain invoke() call to ${provider}...`);
-            }
-            
-            // LangChain-specific: Make the call
-            const result = await client.invoke(messages);
-            
-            if (!webMode) {
-                console.log(`LangChain call completed for ${provider}`);
-            }
-            
+            const client = this._createClient(resolvedProvider, temperature, maxTokens);
+            const result = await client.invoke(this._buildMessages(prompt));
             return {
                 success: true,
-                provider: provider,
-                model: model,
-                prompt: prompt,
-                response: result.content,
-                temperature: temperature,
-                maxTokens: maxTokens
+                provider: resolvedProvider,
+                model,
+                prompt,
+                response: this._extractText(resolvedProvider, result),
+                temperature,
+                maxTokens,
             };
-            
         } catch (error) {
             return {
                 success: false,
-                provider: provider,
-                model: model,
-                prompt: prompt,
+                provider: resolvedProvider,
+                model,
+                prompt,
                 error: error.message,
                 response: null,
-                temperature: temperature,
-                maxTokens: maxTokens
+                temperature,
+                maxTokens,
             };
         }
     }
@@ -150,7 +129,7 @@ class LangChainLLMManager extends BaseLLMManager {
 
 async function main() {
     const args = process.argv.slice(2);
-    
+
     if (args.length > 0 && args[0] === 'web') {
         try {
             const { runWebServer } = await import('../web.js');
@@ -161,17 +140,14 @@ async function main() {
             process.exit(1);
         }
     } else {
-        // CLI mode - all generic logic is in utils.interactiveCli()
         const manager = new LangChainLLMManager();
-        await manager._checkProviders(); // Wait for provider initialization
+        await manager._checkProviders();
         await interactiveCli(manager);
     }
 }
 
-// Export for web.js
 export { LangChainLLMManager };
 
-// Run if this is the main module
 if (import.meta.url === `file://${process.argv[1]}`) {
     main().catch(console.error);
 }

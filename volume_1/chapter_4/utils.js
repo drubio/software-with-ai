@@ -1,6 +1,5 @@
 /**
- * utils.js - Common utilities and configurations shared across all JavaScript frameworks
- * FIXED: Uses a shared readline interface to prevent stream closing issues.
+ * utils.js - Common utilities and configurations shared across all JavaScript frameworks.
  */
 
 import 'dotenv/config';
@@ -18,7 +17,7 @@ export const PROVIDERS = {
     anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY', defaultModel: 'claude-sonnet-4-5', displayName: 'Anthropic Claude' },
     openai: { apiKeyEnv: 'OPENAI_API_KEY', defaultModel: 'gpt-5.2', displayName: 'OpenAI GPT' },
     google: { apiKeyEnv: 'GOOGLE_API_KEY', defaultModel: 'gemini-3-flash-preview', displayName: 'Google Gemini' },
-    xai: { apiKeyEnv: 'XAI_API_KEY', defaultModel: 'grok-4', displayName: 'xAI Grok' }
+    xai: { apiKeyEnv: 'XAI_API_KEY', defaultModel: 'grok-4', displayName: 'xAI Grok' },
 };
 
 export function getApiKey(provider) {
@@ -37,7 +36,6 @@ export function getAllProviders() {
     return Object.keys(PROVIDERS);
 }
 
-// Internal helper for shared readline
 let sharedRl = null;
 function getSharedAsk() {
     if (!sharedRl) {
@@ -46,22 +44,19 @@ function getSharedAsk() {
     return (prompt) => new Promise((resolve) => sharedRl.question(prompt, resolve));
 }
 
-/**
- * Get temperature and max_tokens - matches utils.py sequence
- */
 export async function getUserParameters(ask) {
     const tempInput = await ask('Temperature (0.0-2.0, default 0.7): ');
     let temperature = 0.7;
     if (tempInput.trim()) {
         const parsed = parseFloat(tempInput);
-        temperature = !isNaN(parsed) ? Math.max(0.0, Math.min(2.0, parsed)) : 0.7;
+        temperature = !Number.isNaN(parsed) ? Math.max(0.0, Math.min(2.0, parsed)) : 0.7;
     }
 
     const tokensInput = await ask('Max tokens (default 1000): ');
     let maxTokens = 1000;
     if (tokensInput.trim()) {
-        const parsed = parseInt(tokensInput);
-        maxTokens = !isNaN(parsed) ? Math.max(1, Math.min(4000, parsed)) : 1000;
+        const parsed = parseInt(tokensInput, 10);
+        maxTokens = !Number.isNaN(parsed) ? Math.max(1, Math.min(4000, parsed)) : 1000;
     }
 
     return { temperature, maxTokens };
@@ -70,8 +65,16 @@ export async function getUserParameters(ask) {
 export function displayProviderResponse(provider, response, framework = '') {
     const providerDisplay = `${getDisplayName(provider)}${framework ? ` (${framework})` : ''} answered:`;
     console.log(`\n=== ${providerDisplay} ===`);
+
+    const configParts = [];
+    if (typeof response.temperature !== 'undefined') configParts.push(`temp: ${response.temperature}`);
+    if (typeof response.maxTokens !== 'undefined') configParts.push(`max_tokens: ${response.maxTokens}`);
+    if (response.model) configParts.push(`model: ${response.model}`);
+    if (configParts.length > 0) {
+        console.log(`[${configParts.join(', ')}]`);
+    }
+
     if (response.success) {
-        console.log(`[model: ${response.model || 'unknown'}, temp: ${response.temperature || 'N/A'}]`);
         console.log(response.response || 'No response');
     } else {
         console.log(`Error: ${response.error || 'Unknown error'}`);
@@ -84,7 +87,7 @@ export async function getUserChoice(options, prompt, ask) {
     options.forEach((option, i) => console.log(`${i + 1}. ${option}`));
     while (true) {
         const answer = await ask(`Select an option (1-${options.length}): `);
-        const choice = parseInt(answer) - 1;
+        const choice = parseInt(answer, 10) - 1;
         if (choice >= 0 && choice < options.length) return choice;
         console.log('Invalid selection. Please try again.');
     }
@@ -100,9 +103,6 @@ export function saveResponseToFile(response, filename) {
     console.log(`Response saved to ${filename}`);
 }
 
-/**
- * Base class for LLM framework managers
- */
 export class BaseLLMManager {
     constructor(frameworkName) {
         this.framework = frameworkName;
@@ -138,20 +138,26 @@ export class BaseLLMManager {
         console.log('='.repeat(50) + '\n');
     }
 
-    async queryAllProviders(topic, template, maxTokens, temperature) {
+    async queryAllProviders(topic, template = '{topic}', maxTokens = 1000, temperature = 0.7) {
         const available = this.getAvailableProviders();
+        if (available.length === 0) {
+            return { success: false, error: 'No providers available', prompt: template.replace('{topic}', topic), responses: {} };
+        }
+
         const responses = {};
         for (const provider of available) {
             console.log(`Querying ${getDisplayName(provider)}...`);
             responses[provider] = await this.askQuestion(topic, provider, template, maxTokens, temperature);
         }
-        return { success: true, responses };
+
+        return {
+            success: true,
+            prompt: template.replace('{topic}', topic),
+            responses,
+        };
     }
 }
 
-/**
- * THE PERFECT INTERACTIVE CLI - Aligned with utils.py
- */
 export async function interactiveCli(manager) {
     const ask = getSharedAsk();
 
@@ -159,49 +165,89 @@ export async function interactiveCli(manager) {
         console.log('='.repeat(60));
         console.log(`LLM Gateway - ${manager.framework} Framework`);
         console.log('='.repeat(60));
-        
+
         manager.displayInitializationStatus();
         const availableProviders = manager.getAvailableProviders();
-        
+
         if (availableProviders.length === 0) {
             console.log('No providers available. Check your .env file.');
-            sharedRl.close();
             return;
         }
 
-        // 1. Get Parameters FIRST
         const { temperature, maxTokens } = await getUserParameters(ask);
         console.log(`\nUsing temperature: ${temperature}, max tokens: ${maxTokens}`);
 
-        // 2. Mode Selection
-        console.log(`\nAvailable: ${availableProviders.map(p => getDisplayName(p)).join(', ')}`);
+        console.log(`\nAvailable: ${availableProviders.map((p) => getDisplayName(p)).join(', ')}`);
         const mode = (await ask('Query ALL providers or select one? (all/one): ')).trim().toLowerCase();
+
+        const memorySupported = Boolean(
+            manager.memoryEnabled
+            && typeof manager.askQuestion === 'function'
+            && typeof manager.getHistory === 'function'
+            && typeof manager.resetMemory === 'function'
+        );
 
         if (['all', 'a', ''].includes(mode)) {
             const question = await ask('Enter your question: ');
             const results = await manager.queryAllProviders(question, '{topic}', maxTokens, temperature);
-            for (const [provider, res] of Object.entries(results.responses)) {
-                displayProviderResponse(provider, res, manager.framework);
+            if (results.success) {
+                for (const [provider, res] of Object.entries(results.responses)) {
+                    displayProviderResponse(provider, res, manager.framework);
+                }
+            } else {
+                console.log(`Error: ${results.error}`);
             }
+
             const save = (await ask('\nSave results? (y/n): ')).toLowerCase();
             if (save === 'y' || save === 'yes') {
                 saveResponseToFile(results, formatFilename(question, manager.framework.toLowerCase()));
             }
         } else {
-            const names = availableProviders.map(p => getDisplayName(p));
-            const choice = await getUserChoice(names, "Select a provider:", ask);
+            const names = availableProviders.map((p) => getDisplayName(p));
+            const choice = await getUserChoice(names, 'Select a provider:', ask);
             const provider = availableProviders[choice];
+
+            let sessionId = 'default';
+            if (memorySupported) {
+                const sessionInput = (await ask("Enter memory session ID (default: 'default'): ")).trim();
+                if (sessionInput) sessionId = sessionInput;
+                console.log(`Using memory session: ${sessionId}`);
+            }
 
             console.log('\n' + '='.repeat(50));
             console.log(`${manager.framework.toUpperCase()} INTERACTIVE MODE - ${getDisplayName(provider).toUpperCase()}`);
             console.log('='.repeat(50));
 
             while (true) {
-                const userInput = (await ask("\nAsk a question (or 'exit'): ")).trim();
+                const prompt = memorySupported
+                    ? "\nAsk a question (or 'history', 'clear', 'exit'): "
+                    : "\nAsk a question (or 'exit'): ";
+                const userInput = (await ask(prompt)).trim();
+
                 if (['exit', 'quit'].includes(userInput.toLowerCase())) break;
                 if (!userInput) continue;
 
-                const result = await manager.askQuestion(userInput, provider, '{topic}', maxTokens, temperature);
+                if (memorySupported && userInput.toLowerCase() === 'history') {
+                    const history = manager.getHistory(provider, sessionId);
+                    console.log(`\n🧠 Memory for ${getDisplayName(provider)} (session: ${sessionId}):`);
+                    for (const turn of history.turns) {
+                        const role = (turn.role || 'unknown').toString();
+                        console.log(`[${role.charAt(0).toUpperCase()}${role.slice(1)}] ${turn.content}`);
+                    }
+                    if (!history.turns.length) console.log('No memory yet.');
+                    continue;
+                }
+
+                if (memorySupported && userInput.toLowerCase() === 'clear') {
+                    manager.resetMemory(provider, sessionId);
+                    console.log(`✅ Memory cleared for session '${sessionId}'`);
+                    continue;
+                }
+
+                const result = memorySupported
+                    ? await manager.askQuestion(userInput, provider, '{topic}', maxTokens, temperature, sessionId)
+                    : await manager.askQuestion(userInput, provider, '{topic}', maxTokens, temperature);
+
                 displayProviderResponse(provider, result, manager.framework);
             }
         }
@@ -209,6 +255,9 @@ export async function interactiveCli(manager) {
         console.error('Fatal Error:', error);
     } finally {
         console.log(`\nThank you for using the ${manager.framework} LLM Gateway!`);
-        if (sharedRl) sharedRl.close();
+        if (sharedRl) {
+            sharedRl.close();
+            sharedRl = null;
+        }
     }
 }

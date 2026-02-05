@@ -1,37 +1,16 @@
 /**
- * web.js - Clean web interface for JavaScript LLM testers
- * Provides clean JSON responses without CLI artifacts
+ * web.js - Clean web interface for JavaScript LLM testers.
+ * Supports optional memory endpoints and session-based tracking.
  */
 
 import express from 'express';
 import cors from 'cors';
 import { getDisplayName, getDefaultModel } from './utils.js';
 
-// Capture console output for web responses
-function captureConsoleOutput(fn) {
-    const originalLog = console.log;
-    const logs = [];
-    
-    console.log = (...args) => {
-        logs.push(args.join(' '));
-    };
-    
-    try {
-        const result = fn();
-        return { result, logs: logs.join('\n') };
-    } finally {
-        console.log = originalLog;
-    }
-}
-
 async function captureConsoleOutputAsync(fn) {
     const originalLog = console.log;
     const logs = [];
-    
-    console.log = (...args) => {
-        logs.push(args.join(' '));
-    };
-    
+    console.log = (...args) => logs.push(args.join(' '));
     try {
         const result = await fn();
         return { result, logs: logs.join('\n') };
@@ -40,71 +19,69 @@ async function captureConsoleOutputAsync(fn) {
     }
 }
 
-function createWebApi(ManagerClass) {
+function supportsMemory(manager) {
+    return Boolean(
+        manager?.memoryEnabled
+        && typeof manager.getHistory === 'function'
+        && typeof manager.resetMemory === 'function'
+    );
+}
+
+function buildManager(managerClassOrFactory) {
+    if (typeof managerClassOrFactory !== 'function') {
+        throw new Error('Invalid manager class/factory provided');
+    }
+    try {
+        return new managerClassOrFactory();
+    } catch {
+        return managerClassOrFactory();
+    }
+}
+
+function createWebApi(managerClassOrFactory) {
     const app = express();
-    
-    // Middleware
     app.use(cors());
     app.use(express.json());
-    
-    // Initialize the manager
+
     let manager;
-    
-    // Initialize manager asynchronously
     const initPromise = (async () => {
-        manager = new ManagerClass();
+        manager = buildManager(managerClassOrFactory);
         await manager._checkProviders();
         return manager;
     })();
-    
-    // Middleware to ensure manager is initialized
-    app.use(async (req, res, next) => {
+
+    app.use(async (_, __, next) => {
         if (!manager) {
             await initPromise;
         }
         next();
     });
-    
-    // Get service status
-    app.get('/', async (req, res) => {
-        try {
-            const availableProviders = manager.getAvailableProviders();
-            
-            res.json({
-                framework: manager.framework,
-                available_providers: availableProviders,
-                total_available: availableProviders.length,
-                initialization_status: manager.initializationMessages,
-                status: availableProviders.length > 0 ? 'healthy' : 'no_providers'
-            });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
+
+    app.get('/', async (_, res) => {
+        const available = manager.getAvailableProviders();
+        res.json({
+            framework: manager.framework,
+            available_providers: available,
+            total_available: available.length,
+            initialization_status: manager.initializationMessages,
+            status: available.length > 0 ? 'healthy' : 'no_providers',
+        });
     });
-    
-    // Get available providers with details
-    app.get('/providers', async (req, res) => {
-        try {
-            const availableProviders = manager.getAvailableProviders();
-            
-            const providersDetail = availableProviders.map(provider => ({
+
+    app.get('/providers', async (_, res) => {
+        const available = manager.getAvailableProviders();
+        res.json({
+            framework: manager.framework,
+            providers: available.map((provider) => ({
                 name: provider,
                 display_name: getDisplayName(provider),
                 model: getDefaultModel(provider),
-                status: manager.initializationMessages[provider] || 'Unknown'
-            }));
-            
-            res.json({
-                framework: manager.framework,
-                providers: providersDetail,
-                count: availableProviders.length
-            });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
+                status: manager.initializationMessages[provider] || 'Unknown',
+            })),
+            count: available.length,
+        });
     });
-    
-    // Query single provider
+
     app.post('/query', async (req, res) => {
         try {
             const {
@@ -112,28 +89,30 @@ function createWebApi(ManagerClass) {
                 provider = null,
                 template = '{topic}',
                 max_tokens = 1000,
-                temperature = 0.7
+                temperature = 0.7,
+                session_id = 'default',
             } = req.body;
-            
+
             if (!topic) {
                 return res.status(400).json({ error: 'Topic is required' });
             }
-            
-            // Capture any console output
+
             const { result, logs } = await captureConsoleOutputAsync(async () => {
-                return await manager.askQuestion(topic, provider, template, max_tokens, temperature);
+                if (supportsMemory(manager)) {
+                    return manager.askQuestion(topic, provider, template, max_tokens, temperature, session_id);
+                }
+                return manager.askQuestion(topic, provider, template, max_tokens, temperature);
             });
-            
+
             if (!result.success) {
                 return res.status(400).json({
                     error: result.error || 'Query failed',
                     provider: result.provider,
-                    debug: logs || null
+                    debug: logs || null,
                 });
             }
-            
-            // Clean response for web
-            const cleanResult = {
+
+            return res.json({
                 success: true,
                 framework: manager.framework,
                 provider: result.provider,
@@ -142,59 +121,40 @@ function createWebApi(ManagerClass) {
                 parameters: {
                     temperature: result.temperature,
                     max_tokens: result.maxTokens,
-                    template: template
+                    template,
                 },
-                prompt: result.prompt
-            };
-            
-            // Optionally include debug info
-            if (logs) {
-                cleanResult.debug = logs;
-            }
-            
-            res.json(cleanResult);
-            
-        } catch (error) {
-            res.status(500).json({
-                error: error.message,
-                framework: manager.framework
+                prompt: result.prompt,
+                session_id: result.sessionId || 'default',
+                ...(logs ? { debug: logs } : {}),
             });
+        } catch (error) {
+            return res.status(500).json({ error: error.message, framework: manager.framework });
         }
     });
-    
-    // Query all available providers
+
     app.post('/query-all', async (req, res) => {
         try {
-            const {
-                topic,
-                template = '{topic}',
-                max_tokens = 1000,
-                temperature = 0.7
-            } = req.body;
-            
+            const { topic, template = '{topic}', max_tokens = 1000, temperature = 0.7 } = req.body;
             if (!topic) {
                 return res.status(400).json({ error: 'Topic is required' });
             }
-            
-            // Capture any console output
-            const { result, logs } = await captureConsoleOutputAsync(async () => {
-                return await manager.queryAllProviders(topic, template, max_tokens, temperature);
-            });
-            
+
+            const { result, logs } = await captureConsoleOutputAsync(async () => (
+                manager.queryAllProviders(topic, template, max_tokens, temperature)
+            ));
+
             if (!result.success) {
                 return res.status(400).json({
                     error: result.error || 'Query failed',
                     framework: manager.framework,
-                    debug: logs || null
+                    debug: logs || null,
                 });
             }
-            
-            // Clean up the responses for web
+
             const cleanResponses = {};
             let successful = 0;
             let failed = 0;
-            
-            for (const [provider, response] of Object.entries(result.responses)) {
+            for (const [provider, response] of Object.entries(result.responses || {})) {
                 if (response.success) {
                     cleanResponses[provider] = {
                         success: true,
@@ -202,98 +162,90 @@ function createWebApi(ManagerClass) {
                         model: response.model,
                         parameters: {
                             temperature: response.temperature,
-                            max_tokens: response.maxTokens
-                        }
+                            max_tokens: response.maxTokens,
+                        },
                     };
-                    successful++;
+                    successful += 1;
                 } else {
                     cleanResponses[provider] = {
                         success: false,
                         error: response.error || 'Unknown error',
-                        model: response.model || 'unknown'
+                        model: response.model || 'unknown',
                     };
-                    failed++;
+                    failed += 1;
                 }
             }
-            
-            const cleanResult = {
+
+            return res.json({
                 success: true,
                 framework: manager.framework,
                 prompt: result.prompt,
                 responses: cleanResponses,
                 summary: {
-                    total_providers: Object.keys(result.responses).length,
-                    successful: successful,
-                    failed: failed
+                    total_providers: Object.keys(result.responses || {}).length,
+                    successful,
+                    failed,
                 },
-                parameters: {
-                    temperature: temperature,
-                    max_tokens: max_tokens,
-                    template: template
-                }
-            };
-            
-            // Optionally include debug info
-            if (logs) {
-                cleanResult.debug = logs;
-            }
-            
-            res.json(cleanResult);
-            
-        } catch (error) {
-            res.status(500).json({
-                error: error.message,
-                framework: manager.framework
-            });
-        }
-    });
-    
-    // Simple health check
-    app.get('/health', async (req, res) => {
-        try {
-            const availableProviders = manager.getAvailableProviders();
-            res.json({
-                status: availableProviders.length > 0 ? 'healthy' : 'unhealthy',
-                framework: manager.framework,
-                providers_available: availableProviders.length
+                parameters: { temperature, max_tokens, template },
+                ...(logs ? { debug: logs } : {}),
             });
         } catch (error) {
-            res.status(500).json({ error: error.message });
+            return res.status(500).json({ error: error.message, framework: manager.framework });
         }
     });
-    
+
+    app.get('/history', async (req, res) => {
+        if (!supportsMemory(manager)) {
+            return res.status(400).json({ error: 'Memory not supported by this manager' });
+        }
+        const { provider, session_id = 'default' } = req.query;
+        if (!provider) {
+            return res.status(400).json({ error: 'provider is required' });
+        }
+        return res.json(manager.getHistory(provider, session_id));
+    });
+
+    app.post('/reset-memory', async (req, res) => {
+        if (!supportsMemory(manager)) {
+            return res.status(400).json({ error: 'Memory not supported by this manager' });
+        }
+        const { provider = null, session_id = null } = req.body || {};
+        return res.json(manager.resetMemory(provider, session_id));
+    });
+
+    app.get('/health', async (_, res) => {
+        const available = manager.getAvailableProviders();
+        res.json({
+            status: available.length > 0 ? 'healthy' : 'unhealthy',
+            framework: manager.framework,
+            providers_available: available.length,
+        });
+    });
+
     return app;
 }
 
-export async function runWebServer(ManagerClass, host = '0.0.0.0', port = 8000) {
-    const app = createWebApi(ManagerClass);
-    
-    // Get framework name for display
+export async function runWebServer(managerClassOrFactory, host = '0.0.0.0', port = 8000) {
+    const app = createWebApi(managerClassOrFactory);
+
     let frameworkName = 'Unknown';
     try {
-        const tempManager = new ManagerClass();
-        frameworkName = tempManager.framework;
-    } catch (error) {
-        // Ignore
+        frameworkName = buildManager(managerClassOrFactory).framework;
+    } catch {
+        // Ignore display failure
     }
-    
+
     app.listen(port, host, () => {
         console.log(`Starting web server for ${frameworkName} framework...`);
-        console.log(`API documentation available at: http://${host}:${port}/`);
         console.log(`Health check: http://${host}:${port}/health`);
         console.log(`Status: http://${host}:${port}/`);
-        console.log('Press Ctrl+C to stop the server');
     });
 }
 
-// Main function for standalone web server
 function main() {
     console.log('Universal LLM Web API (JavaScript)');
-    console.log('This should be called from an LLM tester script like:');
-    console.log('node llm_tester.js web');
 }
 
-// Run if this is the main module
 if (import.meta.url === `file://${process.argv[1]}`) {
     main();
 }

@@ -6,16 +6,11 @@ Now supports optional memory endpoints and session-based tracking.
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional
 import uvicorn
-import sys
 import io
 from contextlib import redirect_stdout
 
-
-# -------------------------
-# Pydantic request schemas
-# -------------------------
 
 class QueryRequest(BaseModel):
     topic: str
@@ -34,9 +29,13 @@ class QueryAllRequest(BaseModel):
     session_id: Optional[str] = "default"
 
 
-# -------------------------
-# Web API generator
-# -------------------------
+def _supports_memory(manager) -> bool:
+    return bool(
+        getattr(manager, "memory_enabled", False)
+        and hasattr(manager, "get_history")
+        and hasattr(manager, "reset_memory")
+    )
+
 
 def create_web_api(manager_class):
     app = FastAPI(
@@ -45,7 +44,6 @@ def create_web_api(manager_class):
         description="Universal API for LLM framework testing"
     )
 
-    # Enable CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -54,21 +52,17 @@ def create_web_api(manager_class):
         allow_headers=["*"],
     )
 
-    # Initialize manager
     manager = manager_class()
-
-    # -------------------------
-    # Routes
-    # -------------------------
 
     @app.get("/")
     async def get_status():
+        available = manager.get_available_providers()
         return {
             "framework": manager.framework,
-            "available_providers": manager.get_available_providers(),
-            "total_available": len(manager.get_available_providers()),
+            "available_providers": available,
+            "total_available": len(available),
             "initialization_status": manager.initialization_messages,
-            "status": "healthy" if manager.get_available_providers() else "no_providers"
+            "status": "healthy" if available else "no_providers"
         }
 
     @app.get("/providers")
@@ -90,7 +84,7 @@ def create_web_api(manager_class):
     @app.post("/query")
     async def query_single(request: QueryRequest):
         try:
-            with redirect_stdout(io.StringIO()) as f:
+            with redirect_stdout(io.StringIO()):
                 args = {
                     "topic": request.topic,
                     "provider": request.provider,
@@ -98,8 +92,7 @@ def create_web_api(manager_class):
                     "max_tokens": request.max_tokens,
                     "temperature": request.temperature
                 }
-                # Conditionally pass session_id if manager supports it
-                if hasattr(manager, "memory_enabled") and manager.memory_enabled:
+                if _supports_memory(manager):
                     args["session_id"] = request.session_id
 
                 result = manager.ask_question(**args)
@@ -107,7 +100,6 @@ def create_web_api(manager_class):
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Query failed"))
 
-            # Clean response
             raw = result.get("response")
             content = raw.content if hasattr(raw, "content") else raw
 
@@ -126,13 +118,15 @@ def create_web_api(manager_class):
                 "session_id": result.get("session_id", "default")
             }
 
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.post("/query-all")
     async def query_all(request: QueryAllRequest):
         try:
-            with redirect_stdout(io.StringIO()) as f:
+            with redirect_stdout(io.StringIO()):
                 result = manager.query_all_providers(
                     topic=request.topic,
                     template=request.template,
@@ -164,35 +158,31 @@ def create_web_api(manager_class):
                 "responses": clean_responses
             }
 
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    if (
-            hasattr(manager, "memory_enabled")
-            and manager.memory_enabled
-            and hasattr(manager, "get_history")
-            and hasattr(manager, "reset_memory")
-    ):        
-        @app.get("/history")
-        async def get_history(provider: str, session_id: str = "default"):
-            return manager.get_history(provider, session_id)
-        
-        @app.post("/reset-memory")
-        async def reset_memory(provider: Optional[str] = None, session_id: Optional[str] = None):
-            return manager.reset_memory(provider, session_id)
+    @app.get("/history")
+    async def get_history(provider: str, session_id: str = "default"):
+        if not _supports_memory(manager):
+            raise HTTPException(status_code=400, detail="Memory not supported by this manager")
+        return manager.get_history(provider, session_id)
+
+    @app.post("/reset-memory")
+    async def reset_memory(provider: Optional[str] = None, session_id: Optional[str] = None):
+        if not _supports_memory(manager):
+            raise HTTPException(status_code=400, detail="Memory not supported by this manager")
+        return manager.reset_memory(provider, session_id)
 
     return app
 
-
-# -------------------------
-# Entrypoint
-# -------------------------
 
 def run_web_server(manager_class, host: str = "0.0.0.0", port: int = 8000):
     app = create_web_api(manager_class)
     try:
         framework_name = manager_class().framework
-    except:
+    except Exception:
         framework_name = "Unknown"
 
     print(f"Starting web server for {framework_name}")
