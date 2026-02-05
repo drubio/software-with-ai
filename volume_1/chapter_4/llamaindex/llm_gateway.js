@@ -1,17 +1,17 @@
 /**
  * LLM Tester - LlamaIndex JavaScript Framework Implementation
- * Aligned with the Python LlamaIndex implementation.
+ * Reusable core manager for chapter extensions.
  */
 
 import { Anthropic } from '@llamaindex/anthropic';
 import { OpenAI } from '@llamaindex/openai';
 import { Gemini } from '@llamaindex/google';
 
-import { 
-    getApiKey, 
-    getDefaultModel, 
-    BaseLLMManager, 
-    interactiveCli 
+import {
+    getApiKey,
+    getDefaultModel,
+    BaseLLMManager,
+    interactiveCli,
 } from '../utils.js';
 
 class LlamaIndexLLMManager extends BaseLLMManager {
@@ -20,109 +20,110 @@ class LlamaIndexLLMManager extends BaseLLMManager {
     }
 
     async _testProvider(provider) {
-        // Test LlamaIndex provider initialization
         await this._createClient(provider, 0.7, 1000);
     }
 
     _createClient(provider, temperature, maxTokens) {
-        const apiKey = getApiKey(provider);
-        const model = getDefaultModel(provider);
-
         if (provider === 'anthropic') {
             return new Anthropic({
-                apiKey: apiKey,
-                model: model,
-                temperature: temperature,
-                maxTokens: maxTokens
+                apiKey: getApiKey(provider),
+                model: getDefaultModel(provider),
+                temperature,
+                maxTokens,
             });
         }
-        
-        else if (provider === 'openai') {
+        if (provider === 'openai') {
             return new OpenAI({
-                apiKey: apiKey,
-                model: model,
-                temperature: temperature,
-                maxCompletionTokens: maxTokens
+                apiKey: getApiKey(provider),
+                model: getDefaultModel(provider),
+                temperature,
+                maxCompletionTokens: maxTokens,
             });
         }
-
-        else if (provider === 'xai') {
-            return new OpenAI({
-                apiKey: apiKey,
-                model: model,
-                temperature: temperature,
-                maxTokens: maxTokens,
-                // Override base URL for xAI Grok
-                baseURL: "https://api.x.ai/v1"
-            });
-        }
-        
-        else if (provider === 'google') {
+        if (provider === 'google') {
             return new Gemini({
-                apiKey: apiKey,
-                model: model,
-                temperature: temperature,
-                maxTokens: maxTokens
+                apiKey: getApiKey(provider),
+                model: getDefaultModel(provider),
+                temperature,
+                maxTokens,
             });
         }
-        
-        throw new Error(`Provider ${provider} not supported`);
+        if (provider === 'xai') {
+            return new OpenAI({
+                apiKey: getApiKey(provider),
+                baseURL: 'https://api.x.ai/v1',
+                model: getDefaultModel(provider),
+                temperature,
+                maxCompletionTokens: maxTokens,
+            });
+        }
+        throw new Error(`Unsupported provider: ${provider}`);
+    }
+
+    _resolveProvider(provider) {
+        const available = this.getAvailableProviders();
+        if (provider && available.includes(provider)) {
+            return provider;
+        }
+        return available.length > 0 ? available[0] : null;
+    }
+
+    _extractText(result) {
+        const content = result?.message?.content;
+        if (typeof content === 'string') {
+            return content;
+        }
+        if (Array.isArray(content)) {
+            return content
+                .filter((block) => block?.type === 'text' && typeof block?.text === 'string')
+                .map((block) => block.text)
+                .join('\n');
+        }
+        return String(content ?? result?.message ?? result ?? '');
     }
 
     async askQuestion(topic, provider = null, template = '{topic}', maxTokens = 1000, temperature = 0.7) {
-        const available = this.getAvailableProviders();
-        if (!provider && available.length > 0) provider = available[0];
-        if (!provider) return { success: false, error: 'No provider' };
-
-        const client = this._createClient(provider, temperature, maxTokens);
         const prompt = template.replace('{topic}', topic);
-        const model = getDefaultModel(provider);
+        const resolvedProvider = this._resolveProvider(provider);
+
+        if (!resolvedProvider) {
+            return {
+                success: false,
+                error: 'No providers available',
+                provider: 'none',
+                model: 'none',
+                prompt,
+                response: null,
+            };
+        }
+
+        const model = getDefaultModel(resolvedProvider);
 
         try {
-            // LlamaIndex chat logic
-            const response = await client.chat({
-                messages: [
-                    { role: 'user', content: prompt }
-                ]
+            const client = this._createClient(resolvedProvider, temperature, maxTokens);
+            const result = await client.chat({
+                messages: [{ role: 'user', content: prompt }],
             });
-
-	    // Robust extraction logic
-	    let resultText = "";
-	    const content = response.message.content;
-
-	    if (typeof content === 'string') {
-		resultText = content;
-	    } else if (Array.isArray(content)) {
-		// Join all text parts if there are multiple, or just take the first
-		resultText = content
-		    .filter(block => block.type === 'text')
-		    .map(block => block.text)
-		    .join('\n');
-	    } else {
-		// Fallback for unexpected shapes
-		resultText = content.toString();
-	    }
 
             return {
                 success: true,
-                provider: provider,
-                model: model,
-                prompt: prompt,
-                response: resultText,
-                temperature: temperature,
-                maxTokens: maxTokens
+                provider: resolvedProvider,
+                model,
+                prompt,
+                response: this._extractText(result),
+                temperature,
+                maxTokens,
             };
-            
         } catch (error) {
             return {
                 success: false,
-                provider: provider,
-                model: model,
-                prompt: prompt,
+                provider: resolvedProvider,
+                model,
+                prompt,
                 error: error.message,
                 response: null,
-                temperature: temperature,
-                maxTokens: maxTokens
+                temperature,
+                maxTokens,
             };
         }
     }
@@ -130,13 +131,14 @@ class LlamaIndexLLMManager extends BaseLLMManager {
 
 async function main() {
     const args = process.argv.slice(2);
-    
+
     if (args.length > 0 && args[0] === 'web') {
         try {
-            const { runWebServer } = await import('./web.js');
+            const { runWebServer } = await import('../web.js');
             await runWebServer(LlamaIndexLLMManager);
         } catch (error) {
             console.error('Error: web.js not found or Express not installed.');
+            console.error('Install Express: npm install express cors');
             process.exit(1);
         }
     } else {
