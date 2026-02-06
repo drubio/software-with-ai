@@ -82,7 +82,8 @@ def create_web_api(manager_class):
                     "model": get_default_model(p),
                     "status": manager.initialization_messages.get(p, "Unknown")
                 } for p in providers
-            ]
+            ],
+            "count": len(providers)
         }
 
     @app.get("/capabilities")
