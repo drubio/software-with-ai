@@ -5,11 +5,15 @@ Now supports optional memory endpoints and session-based tracking.
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
 import io
 from contextlib import redirect_stdout
+import json
+
+from stream import iter_text_chunks, normalize_response_text
 
 
 class QueryRequest(BaseModel):
@@ -81,6 +85,15 @@ def create_web_api(manager_class):
             ]
         }
 
+    @app.get("/capabilities")
+    async def get_capabilities():
+        return {
+            "framework": manager.framework,
+            "streaming": True,
+            "stream_transport": "sse",
+            "memory": _supports_memory(manager),
+        }
+
     @app.post("/query")
     async def query_single(request: QueryRequest):
         try:
@@ -122,6 +135,45 @@ def create_web_api(manager_class):
             raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/query-stream")
+    async def query_stream(request: QueryRequest):
+        async def stream_events():
+            try:
+                with redirect_stdout(io.StringIO()):
+                    args = {
+                        "topic": request.topic,
+                        "provider": request.provider,
+                        "template": request.template,
+                        "max_tokens": request.max_tokens,
+                        "temperature": request.temperature,
+                    }
+                    if _supports_memory(manager):
+                        args["session_id"] = request.session_id
+
+                    result = manager.ask_question(**args)
+
+                if not result.get("success"):
+                    error_payload = {"type": "error", "error": result.get("error", "Query failed")}
+                    yield f"data: {json.dumps(error_payload)}\n\n"
+                    return
+
+                response_text = normalize_response_text(result.get("response"))
+                async for chunk in iter_text_chunks(response_text):
+                    payload = {"type": "chunk", "content": chunk}
+                    yield f"data: {json.dumps(payload)}\n\n"
+
+                done_payload = {
+                    "type": "done",
+                    "provider": result.get("provider"),
+                    "model": result.get("model"),
+                }
+                yield f"data: {json.dumps(done_payload)}\n\n"
+            except Exception as e:
+                payload = {"type": "error", "error": str(e)}
+                yield f"data: {json.dumps(payload)}\n\n"
+
+        return StreamingResponse(stream_events(), media_type="text/event-stream")
 
     @app.post("/query-all")
     async def query_all(request: QueryAllRequest):

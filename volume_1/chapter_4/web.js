@@ -6,6 +6,7 @@
 import express from 'express';
 import cors from 'cors';
 import { getDisplayName, getDefaultModel } from './utils.js';
+import { chunkText, normalizeResponseText } from './stream.js';
 
 async function captureConsoleOutputAsync(fn) {
     const originalLog = console.log;
@@ -82,6 +83,15 @@ function createWebApi(managerClassOrFactory) {
         });
     });
 
+    app.get('/capabilities', async (_, res) => {
+        res.json({
+            framework: manager.framework,
+            streaming: true,
+            stream_transport: 'sse',
+            memory: supportsMemory(manager),
+        });
+    });
+
     app.post('/query', async (req, res) => {
         try {
             const {
@@ -129,6 +139,53 @@ function createWebApi(managerClassOrFactory) {
             });
         } catch (error) {
             return res.status(500).json({ error: error.message, framework: manager.framework });
+        }
+    });
+
+    app.post('/query-stream', async (req, res) => {
+        try {
+            const {
+                topic,
+                provider = null,
+                template = '{topic}',
+                max_tokens = 1000,
+                temperature = 0.7,
+                session_id = 'default',
+            } = req.body;
+
+            if (!topic) {
+                return res.status(400).json({ error: 'Topic is required' });
+            }
+
+            const { result } = await captureConsoleOutputAsync(async () => {
+                if (supportsMemory(manager)) {
+                    return manager.askQuestion(topic, provider, template, max_tokens, temperature, session_id);
+                }
+                return manager.askQuestion(topic, provider, template, max_tokens, temperature);
+            });
+
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+
+            if (!result.success) {
+                res.write(`data: ${JSON.stringify({ type: 'error', error: result.error || 'Query failed' })}\n\n`);
+                return res.end();
+            }
+
+            const responseText = normalizeResponseText(result.response);
+            for (const chunk of chunkText(responseText)) {
+                res.write(`data: ${JSON.stringify({ type: 'chunk', content: chunk })}\n\n`);
+            }
+
+            res.write(`data: ${JSON.stringify({ type: 'done', provider: result.provider, model: result.model })}\n\n`);
+            return res.end();
+        } catch (error) {
+            if (!res.headersSent) {
+                return res.status(500).json({ error: error.message, framework: manager.framework });
+            }
+            res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+            return res.end();
         }
     });
 

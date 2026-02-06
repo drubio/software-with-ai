@@ -104,14 +104,17 @@ const useAPISettings = () => {
   const [apiCapabilities, setApiCapabilities] = useState({
     hasMemory: false,
     hasHistory: false,
-    framework: ''
+    framework: '',
+    hasStreaming: false,
+    streamTransport: ''
   });
   const [settings, setSettings] = useState({
     queryMode: 'single',
     selectedProvider: '',
     temperature: 0.7,
     maxTokens: 1000,
-    sessionId: 'default' // Added session ID support
+    sessionId: 'default', // Added session ID support
+    responseMode: 'auto' // auto | stream | standard
   });
 
   const checkApiStatus = async () => {
@@ -137,10 +140,25 @@ const useAPISettings = () => {
           setApiStatus('online');
           
           // Detect API capabilities
+          let capabilitiesData = null;
+          try {
+            const capabilitiesResponse = await fetch('http://localhost:8000/capabilities', {
+              method: 'GET',
+              signal: AbortSignal.timeout(3000)
+            });
+            if (capabilitiesResponse.ok) {
+              capabilitiesData = await capabilitiesResponse.json();
+            }
+          } catch (_) {
+            capabilitiesData = null;
+          }
+
           setApiCapabilities({
-            hasMemory: statusData.framework?.includes('History') || false,
-            hasHistory: statusData.framework?.includes('History') || false,
-            framework: statusData.framework || providersData.framework || ''
+            hasMemory: statusData.framework?.includes('History') || capabilitiesData?.memory || false,
+            hasHistory: statusData.framework?.includes('History') || capabilitiesData?.memory || false,
+            framework: statusData.framework || providersData.framework || '',
+            hasStreaming: Boolean(capabilitiesData?.streaming),
+            streamTransport: capabilitiesData?.stream_transport || ''
           });
           
           if (providersData.providers?.length > 0) {
@@ -155,7 +173,7 @@ const useAPISettings = () => {
     } catch (error) {
       setProviders([]);
       setApiStatus('offline');
-      setApiCapabilities({ hasMemory: false, hasHistory: false, framework: '' });
+      setApiCapabilities({ hasMemory: false, hasHistory: false, framework: '', hasStreaming: false, streamTransport: '' });
     }
   };
 
@@ -171,16 +189,61 @@ const useAPISettings = () => {
 };
 
 // Shared API call logic
-const callAPI = async (message, settings) => {
+const callAPI = async (message, settings, options = {}) => {
   const endpoint = settings.queryMode === 'single' ? '/query' : '/query-all';
   const payload = {
     topic: message,
     temperature: settings.temperature,
     max_tokens: settings.maxTokens,
     template: '{topic}',
-    session_id: settings.sessionId, // Include session ID for new API
+    session_id: settings.sessionId,
     ...(settings.queryMode === 'single' && { provider: settings.selectedProvider })
   };
+
+  const wantsStreaming = settings.responseMode === 'stream' || (settings.responseMode === 'auto' && settings.queryMode === 'single');
+  if (wantsStreaming && settings.queryMode === 'single') {
+    const response = await fetch('http://localhost:8000/query-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok || !response.body) {
+      throw new Error(`Streaming failed with status ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
+
+      for (const event of events) {
+        const lines = event.split('\n').filter(line => line.startsWith('data: '));
+        for (const line of lines) {
+          const payloadLine = line.slice(6);
+          if (!payloadLine) continue;
+          const parsed = JSON.parse(payloadLine);
+
+          if (parsed.type === 'chunk') {
+            fullText += parsed.content || '';
+            options.onChunk?.(fullText);
+          } else if (parsed.type === 'error') {
+            throw new Error(parsed.error || 'Streaming failed');
+          }
+        }
+      }
+    }
+
+    return fullText;
+  }
 
   const response = await fetch(`http://localhost:8000${endpoint}`, {
     method: 'POST',
@@ -359,6 +422,26 @@ const SettingsSidebar = ({ isOpen, onClose, settings, onSettingsChange, provider
       )}
 
       <div>
+        <label className="block text-sm font-medium mb-2">Response Mode</label>
+        <select
+          value={settings.responseMode}
+          onChange={(e) => onSettingsChange({ ...settings, responseMode: e.target.value })}
+          className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="auto">Auto Detect</option>
+          <option value="standard">Standard (wait for full response)</option>
+          <option value="stream" disabled={!apiCapabilities.hasStreaming}>
+            Stream (SSE) {apiCapabilities.hasStreaming ? '' : '— unavailable'}
+          </option>
+        </select>
+        <p className="text-xs text-gray-500 mt-1">
+          {apiCapabilities.hasStreaming
+            ? `Backend supports ${apiCapabilities.streamTransport || 'streaming'}.`
+            : 'Backend does not advertise streaming support.'}
+        </p>
+      </div>
+
+      <div>
         <label className="block text-sm font-medium mb-2">Temperature: {settings.temperature}</label>
         <input
           type="range"
@@ -404,7 +487,7 @@ const FrameworkHeader = ({ title, color, settings, onSettingsClick, apiStatus, a
         <div className="text-xs opacity-75">
           Mode: {settings.queryMode} | Provider: {settings.selectedProvider} | 
           {apiCapabilities.hasMemory && `Session: ${settings.sessionId} | `}
-          Temp: {settings.temperature} | Max Tokens: {settings.maxTokens}
+          Mode: {settings.responseMode} | Temp: {settings.temperature} | Max Tokens: {settings.maxTokens}
         </div>
       </div>
       <div className="flex items-center space-x-2">
@@ -437,7 +520,7 @@ const LangChainPage = () => {
   const { providers, settings, setSettings, apiStatus, checkApiStatus, apiCapabilities } = useAPISettings();
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([
-    { role: 'assistant', content: 'Hello! I\'m your LangChain assistant connected to your API.' }
+    { id: 1, role: 'assistant', content: 'Hello! I\'m your LangChain assistant connected to your API.' }
   ]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -445,16 +528,27 @@ const LangChainPage = () => {
     e.preventDefault();
     if (!input?.trim() || isLoading) return;
 
-    const userMessage = { role: 'user', content: input };
-    setMessages(prev => [...prev, userMessage]);
+    const userMessage = { id: Date.now(), role: 'user', content: input };
+    const assistantId = Date.now() + 1;
+    setMessages(prev => [...prev, userMessage, { id: assistantId, role: 'assistant', content: '' }]);
     setIsLoading(true);
     setInput('');
 
     try {
-      const content = await callAPI(input, settings);
-      setMessages(prev => [...prev, { role: 'assistant', content }]);
+      const content = await callAPI(input, settings, {
+        onChunk: (partialText) => {
+          setMessages(prev => prev.map((message: any) => (
+            message.id === assistantId ? { ...message, content: partialText } : message
+          )));
+        }
+      });
+      setMessages(prev => prev.map((message: any) => (
+        message.id === assistantId ? { ...message, content } : message
+      )));
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: `Connection Error: ${error.message}` }]);
+      setMessages(prev => prev.map((message: any) => (
+        message.id === assistantId ? { ...message, content: `Connection Error: ${error.message}` } : message
+      )));
     } finally {
       setIsLoading(false);
     }
@@ -497,8 +591,8 @@ const LangChainPage = () => {
       <div className="flex-1 overflow-hidden p-4">
         <div className="h-full bg-white rounded-lg border overflow-hidden flex flex-col">
           <div className="flex-1 overflow-y-auto p-4">
-            {messages?.map((message, i) => (
-              <div key={i} className={`mb-4 ${message.role === 'user' ? 'text-right' : message.role === 'system' ? 'text-center' : 'text-left'}`}>
+            {messages?.map((message) => (
+              <div key={message.id} className={`mb-4 ${message.role === 'user' ? 'text-right' : message.role === 'system' ? 'text-center' : 'text-left'}`}>
                 <div className={`inline-block max-w-md px-4 py-2 rounded-lg ${
                   message.role === 'user'
                     ? 'bg-blue-600 text-white'
@@ -578,6 +672,7 @@ const LlamaIndexPage = () => {
       temperature: settings.temperature,
       maxTokens: settings.maxTokens,
       sessionId: settings.sessionId,
+      responseMode: settings.responseMode,
       template: '{topic}'
     },
     onError: (error) => console.error('LlamaIndex chat error:', error),
@@ -869,19 +964,34 @@ const CustomChatPage = () => {
     if (!input?.trim() || isLoading) return;
 
     const userMessage = { id: Date.now(), role: 'user', content: input };
-    setMessages(prev => [...prev, userMessage]);
+    const assistantId = Date.now() + 1;
+    setMessages(prev => [...prev, userMessage, { id: assistantId, role: 'assistant', content: '' }]);
     setIsLoading(true);
     setInput('');
 
     try {
-      const content = await callAPI(input, settings);
+      const content = await callAPI(input, settings, {
+        onChunk: (partialText) => {
+          const formattedPartial = settings.queryMode === 'all'
+            ? partialText.replace('Results from', 'Custom Chat Results from')
+            : partialText;
+          setMessages(prev => prev.map(message => (
+            message.id === assistantId ? { ...message, content: formattedPartial } : message
+          )));
+        }
+      });
+
       const formattedContent = settings.queryMode === 'all' 
         ? content.replace('Results from', 'Custom Chat Results from')
         : content;
       
-      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: formattedContent }]);
+      setMessages(prev => prev.map(message => (
+        message.id === assistantId ? { ...message, content: formattedContent } : message
+      )));
     } catch (error) {
-      setMessages(prev => [...prev, { id: Date.now() + 1, role: 'assistant', content: `Connection Error: ${error.message}` }]);
+      setMessages(prev => prev.map(message => (
+        message.id === assistantId ? { ...message, content: `Connection Error: ${error.message}` } : message
+      )));
     } finally {
       setIsLoading(false);
     }

@@ -1,36 +1,135 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Chapter 8 — Unified LLM UI App (Streaming + Standard Responses)
 
-## Getting Started
+This chapter is the final UI showcase for Volume 1.
 
-First, run the development server:
+It contains **one Next.js app** that demonstrates the same backend-powered LLM interactions through **4 different UI component approaches**:
+
+1. **LangChain Agent UI** (`@langchain/langgraph-sdk/react`)
+2. **LlamaIndex Chat UI** (`@llamaindex/chat-ui`)
+3. **Assistant UI** (`@assistant-ui/react`)
+4. **Custom Chat UI** (vanilla React implementation)
+
+All four views share the same runtime settings sidebar and can talk to the earlier chapter backends.
+
+---
+
+## What this chapter demonstrates
+
+### 1) Multiple UI implementations for similar chat behavior
+Each framework tab exposes similar behavior (provider selection, temperature, max tokens, optional memory/history) so you can compare integration style and developer ergonomics.
+
+### 2) **Standard (non-streaming)** vs **Streaming** responses
+The app supports three response modes from the settings panel:
+
+- **Auto Detect**: Uses streaming for single-provider mode when backend capabilities advertise streaming.
+- **Standard**: Classic request/response (render full answer when complete).
+- **Stream (SSE)**: Server-Sent Events mode with progressive chunk rendering.
+
+### 3) Backend capability detection
+The UI checks backend status and capabilities to decide whether streaming is available (similar to the online/offline indicator pattern).
+
+---
+
+## Architecture overview
+
+### Frontend (this chapter)
+- Next.js app in `volume_1/chapter_8`
+- Main UI in `app/page.tsx`
+- LlamaIndex adapter route in `app/api/llamaindex-agent/route.ts`
+
+### Backend (earlier chapters)
+This UI expects a backend on `http://localhost:8000` with:
+
+- `GET /` (status)
+- `GET /providers`
+- `POST /query` (standard single provider)
+- `POST /query-all` (standard multi-provider)
+- `GET /capabilities` (feature discovery, including streaming)
+- `POST /query-stream` (SSE streaming for progressive output)
+- Optional memory endpoints:
+  - `GET /history`
+  - `POST /reset-memory`
+
+Streaming helpers were added at:
+- `volume_1/chapter_4/stream.py`
+- `volume_1/chapter_4/stream.js`
+
+---
+
+## Prerequisites
+
+- Node.js 18+
+- npm
+- A running backend web API on port `8000`
+- Provider API keys configured according to earlier chapters (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
+
+---
+
+## Running the app
+
+## 1) Start the backend (example)
+From a backend chapter that uses the shared web API (for example Chapter 7):
+
+```bash
+cd volume_1/chapter_7
+# Python example
+python langchain/llm_tools_gateway.py web
+
+# or JS example
+node langchain/llm_tools_gateway.js web
+```
+
+You should have an API available at `http://localhost:8000`.
+
+## 2) Install frontend deps
+
+```bash
+cd volume_1/chapter_8
+npm install
+```
+
+## 3) Start Next.js
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Using the UI
 
-## Learn More
+1. Pick one of the 4 framework tabs at the top.
+2. Open settings (gear icon).
+3. Configure:
+   - Query Mode: single provider or all providers
+   - Provider (in single mode)
+   - Response Mode: auto / standard / stream
+   - Temperature / max tokens
+   - Session ID (if memory-enabled backend)
+4. Send prompts and compare behavior across frameworks.
 
-To learn more about Next.js, take a look at the following resources:
+### Streaming behavior notes
+- Streaming is primarily used in **single-provider mode**.
+- If streaming is unavailable, choose **Standard** mode.
+- In **Auto Detect**, the app prefers streaming when backend capabilities indicate support.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Troubleshooting
 
-## Deploy on Vercel
+- **API Offline in UI**: verify backend is running on `localhost:8000`.
+- **No providers shown**: verify API keys are set for at least one provider.
+- **Streaming option disabled**: backend may not implement `/capabilities` with `streaming: true`.
+- **Memory buttons unavailable**: backend manager may not support memory/history.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Goal of this chapter
+
+This chapter is intentionally not about one “best” chat component.
+It is a side-by-side comparison showing how different UI stacks can integrate with the same LLM backend while supporting both:
+
+- **Synchronous request/response UX**, and
+- **Asynchronous streamed UX (SSE)**.
