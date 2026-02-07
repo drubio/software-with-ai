@@ -2,6 +2,7 @@
  * LLM Memory Gateway - LlamaIndex JS with session-based memory (in-memory only).
  */
 
+import { ChatMemoryBuffer, SimpleChatEngine } from 'llamaindex';
 import { LlamaIndexLLMManager as Chapter4LlamaIndexManager } from '../../chapter_4/llamaindex/llm_gateway.js';
 import { getDefaultModel, interactiveCli } from '../../chapter_4/utils.js';
 
@@ -10,23 +11,41 @@ class LlamaIndexLLMManager extends Chapter4LlamaIndexManager {
         super();
         this.framework = 'LlamaIndex+Memory JS';
         this.memoryEnabled = memoryEnabled;
-        this.histories = new Map(); // key: provider::sessionId => [{role, content}]
+        this.memories = new Map(); // key: provider::sessionId => ChatMemoryBuffer
+        this.chatEngines = new Map(); // key: provider::sessionId => SimpleChatEngine
     }
 
     _historyKey(provider, sessionId) {
         return `${provider}::${sessionId}`;
     }
 
-    _getHistory(provider, sessionId) {
+    _getMemory(provider, sessionId) {
         const key = this._historyKey(provider, sessionId);
-        if (!this.histories.has(key)) {
-            this.histories.set(key, []);
+        if (!this.memories.has(key)) {
+            this.memories.set(key, ChatMemoryBuffer.fromDefaults());
         }
-        return this.histories.get(key);
+        return this.memories.get(key);
     }
 
-    _historyToMessages(history) {
-        return history.map((turn) => ({ role: turn.role, content: turn.content }));
+    _getChatEngine(provider, sessionId, temperature, maxTokens) {
+        const key = this._historyKey(provider, sessionId);
+        if (!this.chatEngines.has(key)) {
+            const client = this._createClient(provider, temperature, maxTokens);
+            const memory = this._getMemory(provider, sessionId);
+            const engine = SimpleChatEngine.fromDefaults({ llm: client, memory });
+            this.chatEngines.set(key, engine);
+        }
+        return this.chatEngines.get(key);
+    }
+
+    _memoryMessages(memory) {
+        if (typeof memory.getAll === 'function') {
+            return memory.getAll();
+        }
+        if (typeof memory.getMessages === 'function') {
+            return memory.getMessages();
+        }
+        return Array.isArray(memory.chatHistory) ? memory.chatHistory : [];
     }
 
     async askQuestion(topic, provider = null, template = '{topic}', maxTokens = 1000, temperature = 0.7, sessionId = 'default') {
@@ -51,18 +70,9 @@ class LlamaIndexLLMManager extends Chapter4LlamaIndexManager {
         const model = getDefaultModel(resolvedProvider);
 
         try {
-            const client = this._createClient(resolvedProvider, temperature, maxTokens);
-            const history = this._getHistory(resolvedProvider, sessionId);
-            const response = await client.chat({
-                messages: [
-                    ...this._historyToMessages(history),
-                    { role: 'user', content: prompt },
-                ],
-            });
-            const responseText = this._extractText(response);
-
-            history.push({ role: 'user', content: prompt });
-            history.push({ role: 'assistant', content: responseText });
+            const chatEngine = this._getChatEngine(resolvedProvider, sessionId, temperature, maxTokens);
+            const response = await chatEngine.chat(prompt);
+            const responseText = response?.response ?? this._extractText(response);
 
             return {
                 success: true,
@@ -90,7 +100,10 @@ class LlamaIndexLLMManager extends Chapter4LlamaIndexManager {
     }
 
     getHistory(provider, sessionId = 'default') {
-        const turns = [...this._getHistory(provider, sessionId)];
+        const turns = this._memoryMessages(this._getMemory(provider, sessionId)).map((message) => ({
+            role: message.role ?? message?.message?.role,
+            content: message.content ?? message?.message?.content,
+        }));
         return { provider, sessionId, turns, count: turns.length };
     }
 
@@ -99,26 +112,30 @@ class LlamaIndexLLMManager extends Chapter4LlamaIndexManager {
 
         if (provider && sessionId) {
             const key = this._historyKey(provider, sessionId);
-            this.histories.delete(key);
+            this.memories.delete(key);
+            this.chatEngines.delete(key);
             removed.push([provider, sessionId]);
         } else if (provider) {
-            for (const key of Array.from(this.histories.keys())) {
+            for (const key of Array.from(this.memories.keys())) {
                 const [p, s] = key.split('::');
                 if (p === provider) {
-                    this.histories.delete(key);
+                    this.memories.delete(key);
+                    this.chatEngines.delete(key);
                     removed.push([p, s]);
                 }
             }
         } else if (sessionId) {
-            for (const key of Array.from(this.histories.keys())) {
+            for (const key of Array.from(this.memories.keys())) {
                 const [p, s] = key.split('::');
                 if (s === sessionId) {
-                    this.histories.delete(key);
+                    this.memories.delete(key);
+                    this.chatEngines.delete(key);
                     removed.push([p, s]);
                 }
             }
         } else {
-            this.histories.clear();
+            this.memories.clear();
+            this.chatEngines.clear();
             removed.push('ALL');
         }
 

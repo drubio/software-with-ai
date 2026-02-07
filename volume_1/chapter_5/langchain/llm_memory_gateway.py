@@ -10,9 +10,8 @@ CHAPTER_4_LANGCHAIN = os.path.join(CHAPTER_4_ROOT, "langchain")
 sys.path.append(CHAPTER_4_ROOT)
 sys.path.append(CHAPTER_4_LANGCHAIN)
 
-from langchain_core.messages import HumanMessage
 from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.runnables import RunnableLambda
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
 from llm_gateway import LangChainLLMManager as Chapter4LangChainManager
@@ -45,10 +44,15 @@ class LangChainLLMManager(Chapter4LangChainManager):
         key = (provider, session_id)
         if key not in self.chains:
             client = self._create_client(provider, temperature, max_tokens)
-            history = self._get_history(provider, session_id)
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    MessagesPlaceholder("history"),
+                    ("human", "{input}"),
+                ]
+            )
             self.chains[key] = RunnableWithMessageHistory(
-                RunnableLambda(lambda payload: client.invoke([HumanMessage(content=payload["input"])])),
-                get_session_history=lambda _: history,
+                prompt | client,
+                get_session_history=lambda _: self._get_history(provider, session_id),
                 input_messages_key="input",
                 history_messages_key="history",
             )

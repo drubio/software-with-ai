@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import { ChatMemoryBuffer, SimpleChatStore } from 'llamaindex';
 import { LlamaIndexLLMManager as InMemoryLlamaIndexLLMManager } from './llm_memory_gateway.js';
 import { interactiveCli } from '../../chapter_4/utils.js';
 
@@ -16,6 +17,7 @@ class LlamaIndexLLMManager extends InMemoryLlamaIndexLLMManager {
     constructor(memoryEnabled = true) {
         super(memoryEnabled);
         this.framework = 'LlamaIndex+History JS';
+        this.chatStores = new Map();
     }
 
     _sessionFilePath(provider, sessionId) {
@@ -24,32 +26,44 @@ class LlamaIndexLLMManager extends InMemoryLlamaIndexLLMManager {
         return path.join(sessionsDir, `${provider}__${sessionId}.json`);
     }
 
-    _getHistory(provider, sessionId) {
-        const key = this._historyKey(provider, sessionId);
-        if (!this.histories.has(key)) {
-            const filePath = this._sessionFilePath(provider, sessionId);
-            let history = [];
-            if (fs.existsSync(filePath)) {
-                try {
-                    history = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-                } catch {
-                    history = [];
-                }
-            }
-            this.histories.set(key, history);
-        }
-        return this.histories.get(key);
+    _sessionStoreKey(provider, sessionId) {
+        return `${provider}__${sessionId}`;
     }
 
-    _persistHistory(provider, sessionId) {
-        const filePath = this._sessionFilePath(provider, sessionId);
-        fs.writeFileSync(filePath, JSON.stringify(this._getHistory(provider, sessionId), null, 2));
+    _getChatStore(provider, sessionId) {
+        const key = this._historyKey(provider, sessionId);
+        if (!this.chatStores.has(key)) {
+            const filePath = this._sessionFilePath(provider, sessionId);
+            const store = fs.existsSync(filePath)
+                ? SimpleChatStore.fromPersistPath(filePath)
+                : new SimpleChatStore();
+            this.chatStores.set(key, store);
+        }
+        return this.chatStores.get(key);
+    }
+
+    _getMemory(provider, sessionId) {
+        const key = this._historyKey(provider, sessionId);
+        if (!this.memories.has(key)) {
+            const chatStore = this._getChatStore(provider, sessionId);
+            const memory = ChatMemoryBuffer.fromDefaults({
+                chatStore,
+                chatStoreKey: this._sessionStoreKey(provider, sessionId),
+            });
+            this.memories.set(key, memory);
+        }
+        return this.memories.get(key);
+    }
+
+    _persistMemory(provider, sessionId) {
+        const chatStore = this._getChatStore(provider, sessionId);
+        chatStore.persist(this._sessionFilePath(provider, sessionId));
     }
 
     async askQuestion(topic, provider = null, template = '{topic}', maxTokens = 1000, temperature = 0.7, sessionId = 'default') {
         const result = await super.askQuestion(topic, provider, template, maxTokens, temperature, sessionId);
         if (result.success && this.memoryEnabled) {
-            this._persistHistory(result.provider, result.sessionId || 'default');
+            this._persistMemory(result.provider, result.sessionId || 'default');
         }
         return result;
     }
@@ -59,6 +73,7 @@ class LlamaIndexLLMManager extends InMemoryLlamaIndexLLMManager {
         const sessionsDir = path.join(__dirname, 'sessions');
 
         if (result.removedSessions.length === 1 && result.removedSessions[0] === 'ALL') {
+            this.chatStores.clear();
             if (fs.existsSync(sessionsDir)) {
                 for (const fileName of fs.readdirSync(sessionsDir)) {
                     if (fileName.endsWith('.json')) {
@@ -75,6 +90,7 @@ class LlamaIndexLLMManager extends InMemoryLlamaIndexLLMManager {
                 if (fs.existsSync(filePath)) {
                     fs.unlinkSync(filePath);
                 }
+                this.chatStores.delete(this._historyKey(key[0], key[1]));
             }
         }
 

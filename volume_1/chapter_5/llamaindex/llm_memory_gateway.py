@@ -10,7 +10,9 @@ CHAPTER_4_LLAMAINDEX = os.path.join(CHAPTER_4_ROOT, "llamaindex")
 sys.path.append(CHAPTER_4_ROOT)
 sys.path.append(CHAPTER_4_LLAMAINDEX)
 
+from llama_index.core.chat_engine import SimpleChatEngine
 from llama_index.core.llms import ChatMessage
+from llama_index.core.memory import ChatMemoryBuffer
 
 from llm_gateway import LlamaIndexLLMManager as Chapter4LlamaIndexManager
 from utils import get_default_model, interactive_cli
@@ -21,15 +23,34 @@ class LlamaIndexLLMManager(Chapter4LlamaIndexManager):
 
     def __init__(self, memory_enabled: bool = True):
         self.memory_enabled = memory_enabled
-        self.histories: Dict[Tuple[str, str], List[ChatMessage]] = {}
+        self.memories: Dict[Tuple[str, str], ChatMemoryBuffer] = {}
+        self.chat_engines: Dict[Tuple[str, str], SimpleChatEngine] = {}
         super().__init__()
         self.framework = "LlamaIndex+Memory"
 
-    def _get_history(self, provider: str, session_id: str) -> List[ChatMessage]:
+    def _get_memory(self, provider: str, session_id: str) -> ChatMemoryBuffer:
         key = (provider, session_id)
-        if key not in self.histories:
-            self.histories[key] = []
-        return self.histories[key]
+        if key not in self.memories:
+            self.memories[key] = ChatMemoryBuffer.from_defaults()
+        return self.memories[key]
+
+    def _get_chat_engine(
+        self, provider: str, session_id: str, temperature: float, max_tokens: int
+    ) -> SimpleChatEngine:
+        key = (provider, session_id)
+        if key not in self.chat_engines:
+            client = self._create_client(provider, temperature=temperature, max_tokens=max_tokens)
+            memory = self._get_memory(provider, session_id)
+            self.chat_engines[key] = SimpleChatEngine.from_defaults(llm=client, memory=memory)
+        return self.chat_engines[key]
+
+    @staticmethod
+    def _memory_messages(memory: ChatMemoryBuffer) -> List[ChatMessage]:
+        if hasattr(memory, "get_all"):
+            return list(memory.get_all())
+        if hasattr(memory, "get_messages"):
+            return list(memory.get_messages())
+        return list(getattr(memory, "chat_history", []) or [])
 
     def ask_question(
         self,
@@ -59,15 +80,9 @@ class LlamaIndexLLMManager(Chapter4LlamaIndexManager):
         model = get_default_model(provider)
 
         try:
-            client = self._create_client(provider, temperature=temperature, max_tokens=max_tokens)
-            history = self._get_history(provider, session_id)
-            messages = [*history, ChatMessage(role="user", content=prompt)]
-
-            result = client.chat(messages)
-            response_text = self._extract_text(result)
-
-            history.append(ChatMessage(role="user", content=prompt))
-            history.append(ChatMessage(role="assistant", content=response_text))
+            chat_engine = self._get_chat_engine(provider, session_id, temperature, max_tokens)
+            result = chat_engine.chat(prompt)
+            response_text = getattr(result, "response", None) or self._extract_text(result)
 
             return {
                 "success": True,
@@ -95,7 +110,7 @@ class LlamaIndexLLMManager(Chapter4LlamaIndexManager):
     def get_history(self, provider: str, session_id: str = "default") -> Dict:
         turns = [
             {"role": str(msg.role), "content": msg.content}
-            for msg in self._get_history(provider, session_id)
+            for msg in self._memory_messages(self._get_memory(provider, session_id))
         ]
         return {
             "provider": provider,
@@ -109,20 +124,24 @@ class LlamaIndexLLMManager(Chapter4LlamaIndexManager):
 
         if provider and session_id:
             key = (provider, session_id)
-            self.histories.pop(key, None)
+            self.memories.pop(key, None)
+            self.chat_engines.pop(key, None)
             removed.append(key)
         elif provider:
-            for key in list(self.histories.keys()):
+            for key in list(self.memories.keys()):
                 if key[0] == provider:
-                    self.histories.pop(key, None)
+                    self.memories.pop(key, None)
+                    self.chat_engines.pop(key, None)
                     removed.append(key)
         elif session_id:
-            for key in list(self.histories.keys()):
+            for key in list(self.memories.keys()):
                 if key[1] == session_id:
-                    self.histories.pop(key, None)
+                    self.memories.pop(key, None)
+                    self.chat_engines.pop(key, None)
                     removed.append(key)
         else:
-            self.histories.clear()
+            self.memories.clear()
+            self.chat_engines.clear()
             removed = ["ALL"]
 
         return {"status": "cleared", "removed_sessions": removed}

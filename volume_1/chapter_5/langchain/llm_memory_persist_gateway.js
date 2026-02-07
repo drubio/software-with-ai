@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import { FileChatMessageHistory } from '@langchain/community/stores/message/file';
 import { LangChainLLMManager as InMemoryLangChainLLMManager } from './llm_memory_gateway.js';
 import { interactiveCli } from '../../chapter_4/utils.js';
 
@@ -27,24 +28,10 @@ class LangChainLLMManager extends InMemoryLangChainLLMManager {
     _getHistory(provider, sessionId) {
         const key = this._historyKey(provider, sessionId);
         if (!this.histories.has(key)) {
-            const file = this._sessionFilePath(provider, sessionId);
-            if (fs.existsSync(file)) {
-                const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
-                this.histories.set(key, Array.isArray(parsed) ? parsed : []);
-            } else {
-                this.histories.set(key, []);
-            }
+            const filePath = this._sessionFilePath(provider, sessionId);
+            this.histories.set(key, new FileChatMessageHistory({ filePath }));
         }
         return this.histories.get(key);
-    }
-
-    async askQuestion(topic, provider = null, template = '{topic}', maxTokens = 1000, temperature = 0.7, sessionId = 'default') {
-        const result = await super.askQuestion(topic, provider, template, maxTokens, temperature, sessionId);
-        if (result.success && this.memoryEnabled) {
-            const history = this._getHistory(result.provider, sessionId);
-            fs.writeFileSync(this._sessionFilePath(result.provider, sessionId), JSON.stringify(history, null, 2));
-        }
-        return result;
     }
 
     resetMemory(provider = null, sessionId = null) {
