@@ -3,7 +3,7 @@ web.py - Clean web interface for LLM testers
 Now supports optional memory endpoints and session-based tracking.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -31,6 +31,11 @@ class QueryAllRequest(BaseModel):
     max_tokens: int = 1000
     temperature: float = 0.7
     session_id: Optional[str] = "default"
+
+
+class ResetMemoryRequest(BaseModel):
+    provider: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 def _supports_memory(manager) -> bool:
@@ -223,10 +228,18 @@ def create_web_api(manager_class):
         return manager.get_history(provider, session_id)
 
     @app.post("/reset-memory")
-    async def reset_memory(provider: Optional[str] = None, session_id: Optional[str] = None):
+    async def reset_memory(
+        request: Optional[ResetMemoryRequest] = Body(None),
+        provider: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ):
         if not _supports_memory(manager):
             raise HTTPException(status_code=400, detail="Memory not supported by this manager")
-        return manager.reset_memory(provider, session_id)
+        body_provider = request.provider if request else None
+        body_session_id = request.session_id if request else None
+        effective_provider = body_provider if body_provider is not None else provider
+        effective_session_id = body_session_id if body_session_id is not None else session_id
+        return manager.reset_memory(effective_provider, effective_session_id)
 
     return app
 

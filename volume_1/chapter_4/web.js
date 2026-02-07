@@ -266,8 +266,14 @@ function createWebApi(managerClassOrFactory) {
         if (!supportsMemory(manager)) {
             return res.status(400).json({ error: 'Memory not supported by this manager' });
         }
-        const { provider = null, session_id = null } = req.body || {};
-        return res.json(manager.resetMemory(provider, session_id));
+        const body = req.body || {};
+        const bodyProvider = body.provider ?? null;
+        const bodySessionId = body.session_id ?? null;
+        const queryProvider = req.query?.provider ?? null;
+        const querySessionId = req.query?.session_id ?? null;
+        const provider = bodyProvider !== null ? bodyProvider : queryProvider;
+        const sessionId = bodySessionId !== null ? bodySessionId : querySessionId;
+        return res.json(manager.resetMemory(provider, sessionId));
     });
 
     app.get('/health', async (_, res) => {
