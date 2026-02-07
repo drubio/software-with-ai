@@ -102,26 +102,16 @@ Use `session_id` in `/query` requests so consecutive calls share context:
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
   -d '{
-        "topic": "My name is Sam. Remember it.",
+        "topic": "Twinkle, Twinkle, Little",
         "provider": "openai",
-        "session_id": "demo-1"
-      }'
-```
-
-```bash
-curl -X POST http://localhost:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{
-        "topic": "What is my name?",
-        "provider": "openai",
-        "session_id": "demo-1"
+        "session_id": "default"
       }'
 ```
 
 ### Read session history
 
 ```bash
-curl "http://localhost:8000/history?provider=openai&session_id=demo-1"
+curl "http://localhost:8000/history?provider=openai&session_id=default"
 ```
 
 ### Reset memory
@@ -129,19 +119,18 @@ curl "http://localhost:8000/history?provider=openai&session_id=demo-1"
 ```bash
 curl -X POST http://localhost:8000/reset-memory \
   -H "Content-Type: application/json" \
-  -d '{"provider": "openai", "session_id": "demo-1"}'
+  -d '{"provider": "openai", "session_id": "default"}'
 ```
 
-To clear all sessions:
+To clear all sessions use no parameters:
 
 ```bash
 curl -X POST http://localhost:8000/reset-memory \
   -H "Content-Type: application/json" \
-  -d '{}'
 ```
 
 ## Notes
 
 - Persistent variants save session memory to a local `sessions/` folder under each framework implementation.
 - Session memory is isolated by both `provider` and `session_id`.
-- Keep using Chapter 4 for base, stateless gateway behavior; use Chapter 5 when multi-turn memory is needed.
+- Keep using Chapter 4 for base, stateless gateway behavior; use Chapter 5 when memory/persistence is needed. The /capabilities end point exposes the flag "memory" (true or false) to indicate if the gateway supports memory/persistence.

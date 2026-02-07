@@ -217,7 +217,7 @@ def create_web_api(manager_class):
             raise HTTPException(status_code=500, detail=str(e))
 
     @app.get("/history")
-    async def get_history(provider: str, session_id: str = "default"):
+    async def get_history(provider: str = "openai", session_id: str = "default"):
         if not _supports_memory(manager):
             raise HTTPException(status_code=400, detail="Memory not supported by this manager")
         return manager.get_history(provider, session_id)
