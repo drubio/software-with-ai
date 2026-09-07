@@ -8,8 +8,8 @@ import {
   createLangChainModel,
   interactiveCli,
   printCliHelp,
-} from '../../shared/utils.mjs';
-import { createGenerateUuidTool } from '../../shared/langchain/tools.js';
+} from '../../shared/utils.ts';
+import { createGenerateUuidTool } from '../../shared/langchain/tools.ts';
 import {
   createAgentStepState,
   extractTextContent,
@@ -17,7 +17,7 @@ import {
   langChainStreamChunkFromEvent,
   printAgentStepMessage,
   printAgentStepOutput,
-} from '../../shared/langchain/utils.js';
+} from '../../shared/langchain/utils.ts';
 
 const logger = getChapterLogger('langchain.chapter_1.basic');
 const SYSTEM_PROMPT = 'Use generate_uuid when user asks for UUID. Keep responses short.';
@@ -191,11 +191,11 @@ async function main() {
 
   if (args.includes('web')) {
     try {
-      const { runWebServer } = await import('../../shared/essentials/web.mjs');
+      const { runWebServer } = await import('../../shared/essentials/web.ts');
       await runWebServer(() => new LangChainLLMManager({ logStepByStep, stream }));
     } catch (error) {
-      console.error('Error: shared web API not found or Express not installed.');
-      console.error('Install Express: npm install express cors');
+      console.error('Unable to start the shared web API.');
+      console.error(error instanceof Error ? error.stack ?? error.message : String(error));
       process.exit(1);
     }
   } else {
